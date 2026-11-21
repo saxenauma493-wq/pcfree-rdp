@@ -145,6 +145,22 @@ jobs:
           "APP_SUBLIME_DIR=$(if ((Test-Path $sc) -and ((Get-ChildItem $sc -File -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)) { 'OK' } else { 'MISSING' })" >> $env:GITHUB_ENV
           "APP_TALLY_DIR=$(if ((Test-Path $tc) -and ((Get-ChildItem $tc -File -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)) { 'OK' } else { 'MISSING' })" >> $env:GITHUB_ENV
 
+          $roots = @("C:\Program Files", "C:\Program Files (x86)", "C:\Users\RDP\AppData\Local\Programs", "C:\")
+          $matched = @()
+          foreach ($root in $roots) {
+            if (Test-Path $root) {
+              $matched += Get-ChildItem -Directory -Path $root -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'Tally|Sublime' } | ForEach-Object { $_.FullName }
+            }
+          }
+          "MATCHED_DIRS=$($matched -join ' | ')" >> $env:GITHUB_ENV
+          $ilog = "Z:\PC-Free\Apps\install.log"
+          if (Test-Path $ilog) {
+            $txt = (Get-Content $ilog -Raw)
+            if ($txt.Length -gt 1000) { $txt = $txt.Substring($txt.Length - 1000) }
+            $txt = ($txt -replace '\r?\n', ' ')
+            "INSTALL_LOG=$txt" >> $env:GITHUB_ENV
+          }
+
           $bkScript = @'
           $rclone = "C:\ProgramData\pcfree\rclone.exe"
           $cfg = "C:\ProgramData\pcfree\rclone.conf"
@@ -193,6 +209,8 @@ jobs:
             "APP_INSTALL=$env:APP_INSTALL",
             "APP_SUBLIME_DIR=$env:APP_SUBLIME_DIR",
             "APP_TALLY_DIR=$env:APP_TALLY_DIR",
+            "MATCHED_DIRS=$env:MATCHED_DIRS",
+            "INSTALL_LOG=$env:INSTALL_LOG",
             "DATA_SYNC=$env:DATA_SYNC",
             "----- RCLONE ERR -----",
             $rcloneErr,
