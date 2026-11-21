@@ -116,11 +116,26 @@ jobs:
           for ($i = 0; $i -lt 15 -and -not (Test-Path "Z:\PC-Free"); $i++) { Start-Sleep -Seconds 2 }
           "Z_MOUNT=$(if (Test-Path 'Z:\PC-Free') { 'OK' } else { 'FAIL' })" >> $env:GITHUB_ENV
 
-          if (Test-Path "$base\apps\INSTALL-APPS.cmd") {
-            $p = Start-Process -FilePath cmd.exe -ArgumentList @("/c", "`"$base\apps\INSTALL-APPS.cmd`"") -PassThru -WindowStyle Hidden
-            if (-not $p.WaitForExit(600000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
-            "APP_INSTALL=DONE" >> $env:GITHUB_ENV
-          } else { "APP_INSTALL=NONE" >> $env:GITHUB_ENV }
+          $apps = @(
+            @{ Name = "SUBLIME"; Exe = "$base\apps\Installers\sublime_text_build_4215_x64_setup.exe"; Args = @("/VERYSILENT", "/NORESTART", "/DIR=Z:\PC-Free\Apps\Sublime") },
+            @{ Name = "DIRECTX"; Exe = "$base\apps\Installers\dxwebsetup.exe"; Args = @("/q", "/a") },
+            @{ Name = "TALLY"; Exe = "$base\apps\Installers\setup (1).exe"; Args = @("/VERYSILENT", "/NORESTART", "/DIR=Z:\PC-Free\Apps\Tally") }
+          )
+          foreach ($a in $apps) {
+            if (-not (Test-Path $a.Exe)) { "$($a.Name)_EXIT=NO_EXE" >> $env:GITHUB_ENV; continue }
+            $p = Start-Process -FilePath $a.Exe -ArgumentList $a.Args -PassThru -WindowStyle Hidden -RedirectStandardOutput "$base\apps\$($a.Name).out.log" -RedirectStandardError "$base\apps\$($a.Name).err.log"
+            if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; $code = "TIMEOUT" } else { $code = $p.ExitCode }
+            "$($a.Name)_EXIT=$code" >> $env:GITHUB_ENV
+          }
+          if (-not (Test-Path "Z:\PC-Free\Apps\Tally\*")) {
+            $t = "$base\apps\Installers\setup (1).exe"
+            if (Test-Path $t) {
+              $p = Start-Process -FilePath $t -ArgumentList @("/S", "/D=Z:\PC-Free\Apps\Tally") -PassThru -WindowStyle Hidden -RedirectStandardOutput "$base\apps\TALLY_NSIS.out.log" -RedirectStandardError "$base\apps\TALLY_NSIS.err.log"
+              if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; $code = "TIMEOUT" } else { $code = $p.ExitCode }
+              "TALLY_NSIS_EXIT=$code" >> $env:GITHUB_ENV
+            }
+          }
+          "APP_INSTALL=DONE" >> $env:GITHUB_ENV
 
           if (Test-Path "Z:\PC-Free") {
             foreach ($app in @("Sublime", "Tally")) {
@@ -153,14 +168,14 @@ jobs:
             }
           }
           "MATCHED_DIRS=$($matched -join ' | ')" >> $env:GITHUB_ENV
-          $ilog = "$base\apps\install.log"
-          if (Test-Path $ilog) {
-            & $rclone --config $cfg copyto "$ilog" "phone:/PC-Free/Apps/install.log" --quiet 2>&1 | Out-File "$ws\rclone.log" -Append
-            $txt = (Get-Content $ilog -Raw)
-            if ($txt.Length -gt 1200) { $txt = $txt.Substring($txt.Length - 1200) }
-            $txt = ($txt -replace '\r?\n', ' ')
-            "INSTALL_LOG=$txt" >> $env:GITHUB_ENV
+          $allLog = ""
+          foreach ($f in (Get-ChildItem "$base\apps\*.log" -ErrorAction SilentlyContinue)) {
+            & $rclone --config $cfg copyto "$($f.FullName)" "phone:/PC-Free/Apps/$($f.Name)" --quiet 2>&1 | Out-File "$ws\rclone.log" -Append
+            $allLog += "--- $($f.Name) ---`n" + (Get-Content $f.FullName -Raw) + "`n"
           }
+          if ($allLog.Length -gt 1200) { $allLog = $allLog.Substring($allLog.Length - 1200) }
+          $allLog = ($allLog -replace '\r?\n', ' ')
+          "INSTALL_LOG=$allLog" >> $env:GITHUB_ENV
 
           $bkScript = @'
           $rclone = "C:\ProgramData\pcfree\rclone.exe"
@@ -210,6 +225,10 @@ jobs:
             "APP_INSTALL=$env:APP_INSTALL",
             "APP_SUBLIME_DIR=$env:APP_SUBLIME_DIR",
             "APP_TALLY_DIR=$env:APP_TALLY_DIR",
+            "SUBLIME_EXIT=$env:SUBLIME_EXIT",
+            "DIRECTX_EXIT=$env:DIRECTX_EXIT",
+            "TALLY_EXIT=$env:TALLY_EXIT",
+            "TALLY_NSIS_EXIT=$env:TALLY_NSIS_EXIT",
             "MATCHED_DIRS=$env:MATCHED_DIRS",
             "INSTALL_LOG=$env:INSTALL_LOG",
             "DATA_SYNC=$env:DATA_SYNC",
