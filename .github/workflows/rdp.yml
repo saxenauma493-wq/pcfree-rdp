@@ -75,6 +75,7 @@ jobs:
         shell: pwsh
         continue-on-error: true
         run: |
+          $ErrorActionPreference = 'Continue'
           $phoneIp = "${{ secrets.PHONE_IP }}"
           $ws = $env:GITHUB_WORKSPACE
           if (-not $phoneIp) { "PHONE_STORAGE=NO_PHONE_IP" >> $env:GITHUB_ENV; exit 0 }
