@@ -46,7 +46,7 @@ jobs:
           $ip = $null
           for ($i = 0; $i -lt 12 -and -not $ip; $i++) {
             Start-Sleep -Seconds 5
-            $ip = (& $ts ip -4 -ErrorAction SilentlyContinue | Select-Object -First 1)
+            $ip = (& $ts ip -4 2>$null | Select-Object -First 1)
           }
           if (-not $ip) { Write-Error "Tailscale IP not assigned"; exit 1 }
           Write-Host "TAILSCALE_IP=$ip"
