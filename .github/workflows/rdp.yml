@@ -140,6 +140,22 @@ jobs:
           "DATA_RESTORE=DONE" >> $env:GITHUB_ENV
           Write-Host "User data restored from Z drive"
 
+      - name: Install apps from Z drive
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $script = "Z:\PC-Free\INSTALL-APPS.cmd"
+          if (-not (Test-Path $script)) {
+            "APP_INSTALL=NONE" >> $env:GITHUB_ENV
+            exit 0
+          }
+          $p = Start-Process -FilePath cmd.exe -ArgumentList @("/c", "`"$script`"") -PassThru -WindowStyle Hidden
+          if (-not $p.WaitForExit(600000)) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+          "APP_INSTALL=DONE" >> $env:GITHUB_ENV
+          Write-Host "App install script finished"
+
       - name: Start periodic data sync to Z drive
         shell: pwsh
         continue-on-error: true
@@ -194,6 +210,7 @@ jobs:
             "Z_DRIVE=$env:Z_DRIVE",
             "Z_VERIFY=$env:Z_VERIFY",
             "DATA_RESTORE=$env:DATA_RESTORE",
+            "APP_INSTALL=$env:APP_INSTALL",
             "DATA_SYNC=$env:DATA_SYNC",
             "Z_ROOT=$env:Z_ROOT",
             "Z_LIST=$env:Z_LIST",
