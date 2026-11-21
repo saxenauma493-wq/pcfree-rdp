@@ -114,6 +114,61 @@ jobs:
             "Z_VERIFY=NO_Z" >> $env:GITHUB_ENV
           }
 
+      - name: Restore user data from Z drive
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $bk = "Z:\PC-Free\WIN-BACKUP"
+          $userDir = "C:\Users\RDP"
+          if (-not (Test-Path "Z:\PC-Free")) {
+            "DATA_RESTORE=NO_Z" >> $env:GITHUB_ENV
+            exit 0
+          }
+          if (-not (Test-Path $bk)) {
+            "DATA_RESTORE=NONE" >> $env:GITHUB_ENV
+            exit 0
+          }
+          foreach ($d in @("Desktop", "Documents", "Downloads")) {
+            if (Test-Path "$bk\$d") {
+              New-Item -ItemType Directory -Force -Path "$userDir\$d" | Out-Null
+              robocopy "$bk\$d" "$userDir\$d" /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
+            }
+          }
+          if (Test-Path "$bk\Roaming") {
+            robocopy "$bk\Roaming" "$userDir\AppData\Roaming" /E /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
+          }
+          "DATA_RESTORE=DONE" >> $env:GITHUB_ENV
+          Write-Host "User data restored from Z drive"
+
+      - name: Start periodic data sync to Z drive
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          if (-not (Test-Path "Z:\PC-Free")) {
+            "DATA_SYNC=NO_Z" >> $env:GITHUB_ENV
+            exit 0
+          }
+          $sync = @'
+          $userDir = "C:\Users\RDP"
+          $bk = "Z:\PC-Free\WIN-BACKUP"
+          while ($true) {
+            foreach ($d in @("Desktop", "Documents", "Downloads")) {
+              if (Test-Path "$userDir\$d") {
+                New-Item -ItemType Directory -Force -Path "$bk\$d" | Out-Null
+                robocopy "$userDir\$d" "$bk\$d" /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
+              }
+            }
+            if (Test-Path "$userDir\AppData\Roaming") {
+              robocopy "$userDir\AppData\Roaming" "$bk\Roaming" /E /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
+            }
+            Start-Sleep -Seconds 600
+          }
+          '@
+          $sync | Set-Content "$env:TEMP\pcfree-sync.ps1"
+          Start-Process pwsh -ArgumentList @("-NoProfile", "-File", "$env:TEMP\pcfree-sync.ps1") -WindowStyle Hidden | Out-Null
+          "DATA_SYNC=RUNNING" >> $env:GITHUB_ENV
+          Write-Host "Periodic data sync started"
+
       - name: Publish status to repo branch
         shell: pwsh
         run: |
@@ -138,6 +193,8 @@ jobs:
             "PHONE_SFTP_TCP=$env:PHONE_SFTP_TCP",
             "Z_DRIVE=$env:Z_DRIVE",
             "Z_VERIFY=$env:Z_VERIFY",
+            "DATA_RESTORE=$env:DATA_RESTORE",
+            "DATA_SYNC=$env:DATA_SYNC",
             "Z_ROOT=$env:Z_ROOT",
             "Z_LIST=$env:Z_LIST",
             "----- RCLONE ERR -----",
@@ -171,6 +228,20 @@ jobs:
           for ($i = 1; $i -le 66; $i++) {
             Write-Host "[$(Get-Date -Format o)] RDP active - cycle $i"
             Start-Sleep -Seconds 300
+          }
+          Write-Host "Final data backup..."
+          $bk = "Z:\PC-Free\WIN-BACKUP"
+          $userDir = "C:\Users\RDP"
+          if (Test-Path "Z:\PC-Free") {
+            foreach ($d in @("Desktop", "Documents", "Downloads")) {
+              if (Test-Path "$userDir\$d") {
+                New-Item -ItemType Directory -Force -Path "$bk\$d" | Out-Null
+                robocopy "$userDir\$d" "$bk\$d" /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
+              }
+            }
+            if (Test-Path "$userDir\AppData\Roaming") {
+              robocopy "$userDir\AppData\Roaming" "$bk\Roaming" /E /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
+            }
           }
           Write-Host "Triggering next session..."
           $uri = "https://api.github.com/repos/saxenauma493-wq/pcfree-rdp/actions/workflows/rdp.yml/dispatches"
