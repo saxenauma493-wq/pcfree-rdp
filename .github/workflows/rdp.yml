@@ -71,119 +71,68 @@ jobs:
           "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
           (& $ts status 2>$null | Out-String) | Set-Content "$env:GITHUB_WORKSPACE\ts-status.txt"
 
-      - name: "Setup Z drive from phone over Tailscale"
+      - name: Setup phone storage and persistent data
         shell: pwsh
         continue-on-error: true
         run: |
           $phoneIp = "${{ secrets.PHONE_IP }}"
           $ws = $env:GITHUB_WORKSPACE
-          if (-not $phoneIp) { "Z_DRIVE=NO_PHONE_IP" >> $env:GITHUB_ENV; exit 0 }
-
+          if (-not $phoneIp) { "PHONE_STORAGE=NO_PHONE_IP" >> $env:GITHUB_ENV; exit 0 }
           $phoneTcp = Test-NetConnection -ComputerName $phoneIp -Port 2222 -InformationLevel Quiet -WarningAction SilentlyContinue
           "PHONE_SFTP_TCP=$phoneTcp" >> $env:GITHUB_ENV
 
-          choco install winfsp -y --no-progress | Out-Null
+          $base = "C:\ProgramData\pcfree"
+          New-Item -ItemType Directory -Force -Path "$base\apps" | Out-Null
           Invoke-WebRequest -Uri "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "$env:TEMP\rclone.zip"
           Expand-Archive -Path "$env:TEMP\rclone.zip" -DestinationPath "$env:TEMP\rclone" -Force
-          $rclone = (Get-ChildItem "$env:TEMP\rclone" -Recurse -Filter rclone.exe | Select-Object -First 1).FullName
+          Copy-Item (Get-ChildItem "$env:TEMP\rclone" -Recurse -Filter rclone.exe | Select-Object -First 1).FullName "$base\rclone.exe" -Force
+          $rclone = "$base\rclone.exe"
+          $cfg = "$base\rclone.conf"
+          & $rclone --config $cfg config create phone sftp host $phoneIp port 2222 user phone pass phone skip_key_file true 2>&1 | Out-File "$ws\rclone.log" -Append
 
-          & $rclone config create phone sftp host $phoneIp port 2222 user phone pass phone skip_key_file true 2>&1 | Out-File "$ws\rclone.log" -Append
-          Start-Process -FilePath $rclone -ArgumentList @("mount", "phone:/", "Z:", "--vfs-cache-mode", "full", "--vfs-write-back", "5s", "--retries", "5", "--low-level-retries", "10", "--dir-cache-time", "10s", "--links", "-v") -WindowStyle Hidden -PassThru -RedirectStandardOutput "$ws\rclone-out.log" -RedirectStandardError "$ws\rclone-err.log" | Out-Null
+          $env:TAILSCALE_IP | Set-Content "$ws\RDP-IP.txt" -Encoding ascii
+          "RDP=$env:TAILSCALE_IP`:3389`nUser=RDP" | Set-Content "$ws\RDP-CONNECT.txt" -Encoding ascii
+          & $rclone --config $cfg copyto "$ws\RDP-IP.txt" "phone:/PC-Free/RDP-IP.txt" --quiet 2>&1 | Out-File "$ws\rclone.log" -Append
+          & $rclone --config $cfg copyto "$ws\RDP-CONNECT.txt" "phone:/PC-Free/RDP-CONNECT.txt" --quiet 2>&1 | Out-File "$ws\rclone.log" -Append
+          $check = (& $rclone --config $cfg cat "phone:/PC-Free/RDP-IP.txt" 2>$null).Trim()
+          "Z_DRIVE=$(if ($check -eq $env:TAILSCALE_IP) { 'READY' } else { 'FAILED' })" >> $env:GITHUB_ENV
+          "Z_VERIFY=$(if ($check -eq $env:TAILSCALE_IP) { 'OK' } else { 'FAIL' })" >> $env:GITHUB_ENV
 
-          $zRoot = $false
-          $zDir = $false
-          for ($i = 0; $i -lt 12 -and -not $zDir; $i++) {
-            Start-Sleep -Seconds 5
-            $zRoot = Test-Path "Z:\"
-            $zDir = Test-Path "Z:\PC-Free"
-          }
-          $zList = ""
-          if ($zRoot) { $zList = ((Get-ChildItem "Z:\" -ErrorAction SilentlyContinue | Select-Object -First 12 -ExpandProperty Name) -join ",") }
-          "Z_ROOT=$zRoot" >> $env:GITHUB_ENV
-          "Z_LIST=$zList" >> $env:GITHUB_ENV
-
-          if ($zDir) {
-            "Z_DRIVE=READY" >> $env:GITHUB_ENV
-            "$env:TAILSCALE_IP" | Out-File -FilePath "Z:\PC-Free\RDP-IP.txt" -Encoding ascii -Force
-            "RDP=$env:TAILSCALE_IP`:3389`nUser=RDP" | Out-File -FilePath "Z:\PC-Free\RDP-CONNECT.txt" -Encoding ascii -Force
-            Start-Sleep -Seconds 5
-            $verify = (Get-Content "Z:\PC-Free\RDP-IP.txt" -Raw).Trim()
-            "Z_VERIFY=$(if ($verify -eq $env:TAILSCALE_IP) { 'OK' } else { 'FAIL' })" >> $env:GITHUB_ENV
-          } else {
-            "Z_DRIVE=FAILED" >> $env:GITHUB_ENV
-            "Z_VERIFY=NO_Z" >> $env:GITHUB_ENV
-          }
-
-      - name: Restore user data from Z drive
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $bk = "Z:\PC-Free\WIN-BACKUP"
           $userDir = "C:\Users\RDP"
-          if (-not (Test-Path "Z:\PC-Free")) {
-            "DATA_RESTORE=NO_Z" >> $env:GITHUB_ENV
-            exit 0
-          }
-          if (-not (Test-Path $bk)) {
-            "DATA_RESTORE=NONE" >> $env:GITHUB_ENV
-            exit 0
-          }
           foreach ($d in @("Desktop", "Documents", "Downloads")) {
-            if (Test-Path "$bk\$d") {
-              New-Item -ItemType Directory -Force -Path "$userDir\$d" | Out-Null
-              robocopy "$bk\$d" "$userDir\$d" /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
-            }
+            New-Item -ItemType Directory -Force -Path "$userDir\$d" | Out-Null
+            & $rclone --config $cfg copy "phone:/PC-Free/WIN-BACKUP/$d" "$userDir\$d" --quiet 2>&1 | Out-File "$ws\rclone.log" -Append
           }
-          if (Test-Path "$bk\Roaming") {
-            robocopy "$bk\Roaming" "$userDir\AppData\Roaming" /E /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
-          }
+          & $rclone --config $cfg copy "phone:/PC-Free/WIN-BACKUP/Roaming" "$userDir\AppData\Roaming" --quiet 2>&1 | Out-File "$ws\rclone.log" -Append
           "DATA_RESTORE=DONE" >> $env:GITHUB_ENV
-          Write-Host "User data restored from Z drive"
 
-      - name: Install apps from Z drive
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $script = "Z:\PC-Free\INSTALL-APPS.cmd"
-          if (-not (Test-Path $script)) {
-            "APP_INSTALL=NONE" >> $env:GITHUB_ENV
-            exit 0
-          }
-          $p = Start-Process -FilePath cmd.exe -ArgumentList @("/c", "`"$script`"") -PassThru -WindowStyle Hidden
-          if (-not $p.WaitForExit(600000)) {
-            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-          }
-          "APP_INSTALL=DONE" >> $env:GITHUB_ENV
-          Write-Host "App install script finished"
+          & $rclone --config $cfg copy "phone:/PC-Free/INSTALL-APPS.cmd" "$base\apps" --quiet 2>&1 | Out-File "$ws\rclone.log" -Append
+          & $rclone --config $cfg copy "phone:/PC-Free/Installers" "$base\apps\Installers" --quiet 2>&1 | Out-File "$ws\rclone.log" -Append
+          if (Test-Path "$base\apps\INSTALL-APPS.cmd") {
+            $p = Start-Process -FilePath cmd.exe -ArgumentList @("/c", "`"$base\apps\INSTALL-APPS.cmd`"") -PassThru -WindowStyle Hidden
+            if (-not $p.WaitForExit(600000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+            "APP_INSTALL=DONE" >> $env:GITHUB_ENV
+          } else { "APP_INSTALL=NONE" >> $env:GITHUB_ENV }
 
-      - name: Start periodic data sync to Z drive
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          if (-not (Test-Path "Z:\PC-Free")) {
-            "DATA_SYNC=NO_Z" >> $env:GITHUB_ENV
-            exit 0
-          }
-          $sync = @'
+          $bkScript = @'
+          $rclone = "C:\ProgramData\pcfree\rclone.exe"
+          $cfg = "C:\ProgramData\pcfree\rclone.conf"
           $userDir = "C:\Users\RDP"
-          $bk = "Z:\PC-Free\WIN-BACKUP"
-          while ($true) {
-            foreach ($d in @("Desktop", "Documents", "Downloads")) {
-              if (Test-Path "$userDir\$d") {
-                New-Item -ItemType Directory -Force -Path "$bk\$d" | Out-Null
-                robocopy "$userDir\$d" "$bk\$d" /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
-              }
-            }
-            if (Test-Path "$userDir\AppData\Roaming") {
-              robocopy "$userDir\AppData\Roaming" "$bk\Roaming" /E /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
-            }
-            Start-Sleep -Seconds 600
+          foreach ($d in @("Desktop", "Documents", "Downloads")) {
+            if (Test-Path "$userDir\$d") { & $rclone --config $cfg copy "$userDir\$d" "phone:/PC-Free/WIN-BACKUP/$d" --quiet }
           }
+          if (Test-Path "$userDir\AppData\Roaming") { & $rclone --config $cfg copy "$userDir\AppData\Roaming" "phone:/PC-Free/WIN-BACKUP/Roaming" --quiet }
           '@
-          $sync | Set-Content "$env:TEMP\pcfree-sync.ps1"
-          Start-Process pwsh -ArgumentList @("-NoProfile", "-File", "$env:TEMP\pcfree-sync.ps1") -WindowStyle Hidden | Out-Null
-          "DATA_SYNC=RUNNING" >> $env:GITHUB_ENV
-          Write-Host "Periodic data sync started"
+          $bkScript | Set-Content "$base\backup.ps1"
+          schtasks /create /tn "PCFreeBackup" /tr "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\pcfree\backup.ps1" /sc minute /mo 10 /ru SYSTEM /rl HIGHEST /f | Out-Null
+          "DATA_SYNC=TASK" >> $env:GITHUB_ENV
+
+          $startup = "$userDir\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\pcfree-z.cmd"
+          @"
+          @echo off
+          start "" /B "C:\ProgramData\pcfree\rclone.exe" --config "C:\ProgramData\pcfree\rclone.conf" mount phone:/ Z: --vfs-cache-mode full --links --retries 5
+          "@ | Set-Content $startup
+          Write-Host "Phone storage ready"
 
       - name: Publish status to repo branch
         shell: pwsh
@@ -191,9 +140,7 @@ jobs:
           $ws = $env:GITHUB_WORKSPACE
           $phoneIp = "${{ secrets.PHONE_IP }}"
           $rcloneErr = ""
-          if (Test-Path "$ws\rclone-err.log") { $rcloneErr = (Get-Content "$ws\rclone-err.log" -Raw) }
-          if (Test-Path "$ws\rclone.log") { $rcloneErr += (Get-Content "$ws\rclone.log" -Raw) }
-          if (Test-Path "$ws\rclone-out.log") { $rcloneErr += (Get-Content "$ws\rclone-out.log" -Raw) }
+          if (Test-Path "$ws\rclone.log") { $rcloneErr = (Get-Content "$ws\rclone.log" -Raw) }
           if ($phoneIp) { $rcloneErr = $rcloneErr.Replace($phoneIp, "<PHONE_IP>") }
           if ($rcloneErr.Length -gt 1500) { $rcloneErr = $rcloneErr.Substring($rcloneErr.Length - 1500) }
           $tsStatus = ""
@@ -212,8 +159,6 @@ jobs:
             "DATA_RESTORE=$env:DATA_RESTORE",
             "APP_INSTALL=$env:APP_INSTALL",
             "DATA_SYNC=$env:DATA_SYNC",
-            "Z_ROOT=$env:Z_ROOT",
-            "Z_LIST=$env:Z_LIST",
             "----- RCLONE ERR -----",
             $rcloneErr,
             "----- TAILSCALE STATUS -----",
@@ -247,18 +192,8 @@ jobs:
             Start-Sleep -Seconds 300
           }
           Write-Host "Final data backup..."
-          $bk = "Z:\PC-Free\WIN-BACKUP"
-          $userDir = "C:\Users\RDP"
-          if (Test-Path "Z:\PC-Free") {
-            foreach ($d in @("Desktop", "Documents", "Downloads")) {
-              if (Test-Path "$userDir\$d") {
-                New-Item -ItemType Directory -Force -Path "$bk\$d" | Out-Null
-                robocopy "$userDir\$d" "$bk\$d" /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
-              }
-            }
-            if (Test-Path "$userDir\AppData\Roaming") {
-              robocopy "$userDir\AppData\Roaming" "$bk\Roaming" /E /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
-            }
+          if (Test-Path "C:\ProgramData\pcfree\backup.ps1") {
+            & pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\ProgramData\pcfree\backup.ps1"
           }
           Write-Host "Triggering next session..."
           $uri = "https://api.github.com/repos/saxenauma493-wq/pcfree-rdp/actions/workflows/rdp.yml/dispatches"
