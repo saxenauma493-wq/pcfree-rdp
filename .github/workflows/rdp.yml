@@ -1,0 +1,89 @@
+name: Free Windows RDP (6h session)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Configure RDP
+        shell: pwsh
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'UserAuthentication' -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'SecurityLayer' -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+          $pass = ConvertTo-SecureString "${{ secrets.RDP_PASSWORD }}" -AsPlainText -Force
+          if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name "RDP" -Password $pass -AccountNeverExpires -PasswordNeverExpires
+          } else {
+            Set-LocalUser -Name "RDP" -Password $pass
+          }
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
+          Write-Host "RDP user ready (password from secret, not printed)"
+
+      - name: Install Tailscale
+        shell: pwsh
+        run: |
+          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.104.7-amd64.msi"
+          $msi = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $url -OutFile $msi
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$msi`"", "/quiet", "/norestart" -Wait
+          Remove-Item $msi -Force -ErrorAction SilentlyContinue
+
+      - name: Connect Tailscale
+        shell: pwsh
+        run: |
+          $ts = "${env:ProgramFiles}\Tailscale\tailscale.exe"
+          & $ts up --authkey="${{ secrets.TAILSCALE_AUTHKEY }}" --hostname="pcfree-$env:GITHUB_RUN_ID"
+          $ip = $null
+          for ($i = 0; $i -lt 12 -and -not $ip; $i++) {
+            Start-Sleep -Seconds 5
+            $ip = (& $ts ip -4 -ErrorAction SilentlyContinue | Select-Object -First 1)
+          }
+          if (-not $ip) { Write-Error "Tailscale IP not assigned"; exit 1 }
+          Write-Host "TAILSCALE_IP=$ip"
+          "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: Setup Z: from phone over Tailscale
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # Phone SFTP server listens on 0.0.0.0:2222; reachable at its Tailscale IP.
+          $phoneIp = "${{ secrets.PHONE_IP }}"
+          if (-not $phoneIp) { Write-Host "PHONE_IP not set - skipping Z: drive"; exit 0 }
+
+          choco install winfsp -y --no-progress | Out-Null
+          Invoke-WebRequest -Uri "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "$env:TEMP\rclone.zip"
+          Expand-Archive -Path "$env:TEMP\rclone.zip" -DestinationPath "$env:TEMP\rclone" -Force
+          $rclone = (Get-ChildItem "$env:TEMP\rclone" -Recurse -Filter rclone.exe | Select-Object -First 1).FullName
+
+          & $rclone config create phone sftp host $phoneIp port 2222 user phone pass phone skip_key_file true
+          Start-Process -FilePath $rclone -ArgumentList @("mount", "phone:/", "Z:", "--vfs-cache-mode", "writes", "--dir-cache-time", "10s", "--allow-other") -WindowStyle Hidden
+          Start-Sleep -Seconds 8
+          if (Test-Path "Z:\PC-Free") { Write-Host "Z: drive ready" } else { Write-Host "Z: drive not ready (check PHONE_IP / Tailscale)" }
+
+      - name: Show connection details
+        shell: pwsh
+        run: |
+          Write-Host "==================================="
+          Write-Host "RDP address : $env:TAILSCALE_IP`:3389"
+          Write-Host "Username    : RDP"
+          Write-Host "Password    : (secret RDP_PASSWORD)"
+          Write-Host "==================================="
+          Write-Host "Session ends in 350 minutes."
+
+      - name: Keep session alive
+        shell: pwsh
+        run: |
+          while ($true) {
+            Write-Host "[$(Get-Date -Format o)] RDP session active"
+            Start-Sleep -Seconds 300
+          }
