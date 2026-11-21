@@ -84,7 +84,7 @@ jobs:
           $rclone = (Get-ChildItem "$env:TEMP\rclone" -Recurse -Filter rclone.exe | Select-Object -First 1).FullName
 
           & $rclone config create phone sftp host $phoneIp port 2222 user phone pass phone skip_key_file true 2>&1 | Out-File "$ws\rclone.log" -Append
-          Start-Process -FilePath $rclone -ArgumentList @("mount", "phone:/", "Z:", "--vfs-cache-mode", "writes", "--dir-cache-time", "10s", "--allow-other", "-v") -WindowStyle Hidden -PassThru -RedirectStandardOutput "$ws\rclone-out.log" -RedirectStandardError "$ws\rclone-err.log" | Out-Null
+          Start-Process -FilePath $rclone -ArgumentList @("mount", "phone:/", "Z:", "--vfs-cache-mode", "writes", "--dir-cache-time", "10s", "--allow-other", "--links", "-v") -WindowStyle Hidden -PassThru -RedirectStandardOutput "$ws\rclone-out.log" -RedirectStandardError "$ws\rclone-err.log" | Out-Null
           Start-Sleep -Seconds 10
           if (Test-Path "Z:\PC-Free") {
             "Z_DRIVE=READY" >> $env:GITHUB_ENV
