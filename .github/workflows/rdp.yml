@@ -85,8 +85,20 @@ jobs:
 
           & $rclone config create phone sftp host $phoneIp port 2222 user phone pass phone skip_key_file true 2>&1 | Out-File "$ws\rclone.log" -Append
           Start-Process -FilePath $rclone -ArgumentList @("mount", "phone:/", "Z:", "--vfs-cache-mode", "writes", "--dir-cache-time", "10s", "--allow-other", "--links", "-v") -WindowStyle Hidden -PassThru -RedirectStandardOutput "$ws\rclone-out.log" -RedirectStandardError "$ws\rclone-err.log" | Out-Null
-          Start-Sleep -Seconds 10
-          if (Test-Path "Z:\PC-Free") {
+
+          $zRoot = $false
+          $zDir = $false
+          for ($i = 0; $i -lt 12 -and -not $zDir; $i++) {
+            Start-Sleep -Seconds 5
+            $zRoot = Test-Path "Z:\"
+            $zDir = Test-Path "Z:\PC-Free"
+          }
+          $zList = ""
+          if ($zRoot) { $zList = ((Get-ChildItem "Z:\" -ErrorAction SilentlyContinue | Select-Object -First 12 -ExpandProperty Name) -join ",") }
+          "Z_ROOT=$zRoot" >> $env:GITHUB_ENV
+          "Z_LIST=$zList" >> $env:GITHUB_ENV
+
+          if ($zDir) {
             "Z_DRIVE=READY" >> $env:GITHUB_ENV
             "$env:TAILSCALE_IP" | Out-File -FilePath "Z:\PC-Free\RDP-IP.txt" -Encoding ascii -Force
             "RDP=$env:TAILSCALE_IP`:3389`nUser=RDP" | Out-File -FilePath "Z:\PC-Free\RDP-CONNECT.txt" -Encoding ascii -Force
@@ -102,6 +114,7 @@ jobs:
           $rcloneErr = ""
           if (Test-Path "$ws\rclone-err.log") { $rcloneErr = (Get-Content "$ws\rclone-err.log" -Raw) }
           if (Test-Path "$ws\rclone.log") { $rcloneErr += (Get-Content "$ws\rclone.log" -Raw) }
+          if (Test-Path "$ws\rclone-out.log") { $rcloneErr += (Get-Content "$ws\rclone-out.log" -Raw) }
           if ($phoneIp) { $rcloneErr = $rcloneErr.Replace($phoneIp, "<PHONE_IP>") }
           if ($rcloneErr.Length -gt 1500) { $rcloneErr = $rcloneErr.Substring($rcloneErr.Length - 1500) }
           $tsStatus = ""
@@ -116,6 +129,8 @@ jobs:
             "RDP_LOCAL_TEST=$env:RDP_LOCAL_TEST",
             "PHONE_SFTP_TCP=$env:PHONE_SFTP_TCP",
             "Z_DRIVE=$env:Z_DRIVE",
+            "Z_ROOT=$env:Z_ROOT",
+            "Z_LIST=$env:Z_LIST",
             "----- RCLONE ERR -----",
             $rcloneErr,
             "----- TAILSCALE STATUS -----",
