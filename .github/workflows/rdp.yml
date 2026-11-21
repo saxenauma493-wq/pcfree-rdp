@@ -52,7 +52,7 @@ jobs:
           Write-Host "TAILSCALE_IP=$ip"
           "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
 
-      - name: Setup Z: from phone over Tailscale
+      - name: "Setup Z drive from phone over Tailscale"
         shell: pwsh
         continue-on-error: true
         run: |
