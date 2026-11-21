@@ -3,6 +3,10 @@ name: Free Windows RDP (6h session)
 on:
   workflow_dispatch:
 
+concurrency:
+  group: pcfree-rdp-chain
+  cancel-in-progress: true
+
 jobs:
   rdp:
     runs-on: windows-latest
@@ -84,7 +88,7 @@ jobs:
           $rclone = (Get-ChildItem "$env:TEMP\rclone" -Recurse -Filter rclone.exe | Select-Object -First 1).FullName
 
           & $rclone config create phone sftp host $phoneIp port 2222 user phone pass phone skip_key_file true 2>&1 | Out-File "$ws\rclone.log" -Append
-          Start-Process -FilePath $rclone -ArgumentList @("mount", "phone:/", "Z:", "--vfs-cache-mode", "writes", "--dir-cache-time", "10s", "--allow-other", "--links", "-v") -WindowStyle Hidden -PassThru -RedirectStandardOutput "$ws\rclone-out.log" -RedirectStandardError "$ws\rclone-err.log" | Out-Null
+          Start-Process -FilePath $rclone -ArgumentList @("mount", "phone:/", "Z:", "--vfs-cache-mode", "full", "--vfs-write-back", "5s", "--retries", "5", "--low-level-retries", "10", "--dir-cache-time", "10s", "--links", "-v") -WindowStyle Hidden -PassThru -RedirectStandardOutput "$ws\rclone-out.log" -RedirectStandardError "$ws\rclone-err.log" | Out-Null
 
           $zRoot = $false
           $zDir = $false
@@ -102,8 +106,12 @@ jobs:
             "Z_DRIVE=READY" >> $env:GITHUB_ENV
             "$env:TAILSCALE_IP" | Out-File -FilePath "Z:\PC-Free\RDP-IP.txt" -Encoding ascii -Force
             "RDP=$env:TAILSCALE_IP`:3389`nUser=RDP" | Out-File -FilePath "Z:\PC-Free\RDP-CONNECT.txt" -Encoding ascii -Force
+            Start-Sleep -Seconds 5
+            $verify = (Get-Content "Z:\PC-Free\RDP-IP.txt" -Raw).Trim()
+            "Z_VERIFY=$(if ($verify -eq $env:TAILSCALE_IP) { 'OK' } else { 'FAIL' })" >> $env:GITHUB_ENV
           } else {
             "Z_DRIVE=FAILED" >> $env:GITHUB_ENV
+            "Z_VERIFY=NO_Z" >> $env:GITHUB_ENV
           }
 
       - name: Publish status to repo branch
@@ -129,6 +137,7 @@ jobs:
             "RDP_LOCAL_TEST=$env:RDP_LOCAL_TEST",
             "PHONE_SFTP_TCP=$env:PHONE_SFTP_TCP",
             "Z_DRIVE=$env:Z_DRIVE",
+            "Z_VERIFY=$env:Z_VERIFY",
             "Z_ROOT=$env:Z_ROOT",
             "Z_LIST=$env:Z_LIST",
             "----- RCLONE ERR -----",
@@ -156,10 +165,19 @@ jobs:
           Write-Host "==================================="
           Write-Host "Session ends in 350 minutes."
 
-      - name: Keep session alive
+      - name: Keep alive then chain next session
         shell: pwsh
         run: |
-          while ($true) {
-            Write-Host "[$(Get-Date -Format o)] RDP session active"
+          for ($i = 1; $i -le 66; $i++) {
+            Write-Host "[$(Get-Date -Format o)] RDP active - cycle $i"
             Start-Sleep -Seconds 300
           }
+          Write-Host "Triggering next session..."
+          $uri = "https://api.github.com/repos/saxenauma493-wq/pcfree-rdp/actions/workflows/rdp.yml/dispatches"
+          $hdr = @{
+            Authorization = "Bearer ${{ secrets.GH_PAT }}"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          Invoke-RestMethod -Method Post -Uri $uri -Headers $hdr -Body '{"ref":"main"}' -ContentType "application/json"
+          Write-Host "Next session dispatched"
