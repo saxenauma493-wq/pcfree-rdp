@@ -7,6 +7,8 @@ jobs:
   rdp:
     runs-on: windows-latest
     timeout-minutes: 350
+    env:
+      RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
     steps:
       - name: Configure RDP
@@ -68,7 +70,11 @@ jobs:
           & $rclone config create phone sftp host $phoneIp port 2222 user phone pass phone skip_key_file true
           Start-Process -FilePath $rclone -ArgumentList @("mount", "phone:/", "Z:", "--vfs-cache-mode", "writes", "--dir-cache-time", "10s", "--allow-other") -WindowStyle Hidden
           Start-Sleep -Seconds 8
-          if (Test-Path "Z:\PC-Free") { Write-Host "Z: drive ready" } else { Write-Host "Z: drive not ready (check PHONE_IP / Tailscale)" }
+          if (Test-Path "Z:\PC-Free") {
+            Write-Host "Z: drive ready"
+            "$env:TAILSCALE_IP" | Out-File -FilePath "Z:\PC-Free\RDP-IP.txt" -Encoding ascii -Force
+            "RDP=$env:TAILSCALE_IP`:3389`nUser=RDP`nPassword=$env:RDP_PASSWORD" | Out-File -FilePath "Z:\PC-Free\RDP-CONNECT.txt" -Encoding ascii -Force
+          } else { Write-Host "Z: drive not ready (check PHONE_IP / Tailscale)" }
 
       - name: Show connection details
         shell: pwsh
