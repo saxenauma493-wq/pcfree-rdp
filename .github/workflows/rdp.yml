@@ -7,10 +7,15 @@ jobs:
   rdp:
     runs-on: windows-latest
     timeout-minutes: 350
+    permissions:
+      contents: write
     env:
       RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Configure RDP
         shell: pwsh
         run: |
@@ -20,6 +25,13 @@ jobs:
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
+          Start-Sleep -Seconds 3
+
+          $listener = Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+          $local = Test-NetConnection -ComputerName 127.0.0.1 -Port 3389 -InformationLevel Quiet -WarningAction SilentlyContinue
+          "RDP_LISTENER=$(if ($listener) { 'LISTEN' } else { 'NOT_LISTENING' })" >> $env:GITHUB_ENV
+          "RDP_LOCAL_TEST=$local" >> $env:GITHUB_ENV
+          Write-Host "RDP listener: $(if ($listener) { 'LISTEN' } else { 'NOT_LISTENING' }), local test: $local"
 
           $pass = ConvertTo-SecureString "${{ secrets.RDP_PASSWORD }}" -AsPlainText -Force
           if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
@@ -53,28 +65,71 @@ jobs:
           if (-not $ip) { Write-Error "Tailscale IP not assigned"; exit 1 }
           Write-Host "TAILSCALE_IP=$ip"
           "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+          (& $ts status 2>$null | Out-String) | Set-Content "$env:GITHUB_WORKSPACE\ts-status.txt"
 
       - name: "Setup Z drive from phone over Tailscale"
         shell: pwsh
         continue-on-error: true
         run: |
-          # Phone SFTP server listens on 0.0.0.0:2222; reachable at its Tailscale IP.
           $phoneIp = "${{ secrets.PHONE_IP }}"
-          if (-not $phoneIp) { Write-Host "PHONE_IP not set - skipping Z: drive"; exit 0 }
+          $ws = $env:GITHUB_WORKSPACE
+          if (-not $phoneIp) { "Z_DRIVE=NO_PHONE_IP" >> $env:GITHUB_ENV; exit 0 }
+
+          $phoneTcp = Test-NetConnection -ComputerName $phoneIp -Port 2222 -InformationLevel Quiet -WarningAction SilentlyContinue
+          "PHONE_SFTP_TCP=$phoneTcp" >> $env:GITHUB_ENV
 
           choco install winfsp -y --no-progress | Out-Null
           Invoke-WebRequest -Uri "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "$env:TEMP\rclone.zip"
           Expand-Archive -Path "$env:TEMP\rclone.zip" -DestinationPath "$env:TEMP\rclone" -Force
           $rclone = (Get-ChildItem "$env:TEMP\rclone" -Recurse -Filter rclone.exe | Select-Object -First 1).FullName
 
-          & $rclone config create phone sftp host $phoneIp port 2222 user phone pass phone skip_key_file true
-          Start-Process -FilePath $rclone -ArgumentList @("mount", "phone:/", "Z:", "--vfs-cache-mode", "writes", "--dir-cache-time", "10s", "--allow-other") -WindowStyle Hidden
-          Start-Sleep -Seconds 8
+          & $rclone config create phone sftp host $phoneIp port 2222 user phone pass phone skip_key_file true 2>&1 | Out-File "$ws\rclone.log" -Append
+          Start-Process -FilePath $rclone -ArgumentList @("mount", "phone:/", "Z:", "--vfs-cache-mode", "writes", "--dir-cache-time", "10s", "--allow-other", "-v") -WindowStyle Hidden -PassThru -RedirectStandardOutput "$ws\rclone-out.log" -RedirectStandardError "$ws\rclone-err.log" | Out-Null
+          Start-Sleep -Seconds 10
           if (Test-Path "Z:\PC-Free") {
-            Write-Host "Z: drive ready"
+            "Z_DRIVE=READY" >> $env:GITHUB_ENV
             "$env:TAILSCALE_IP" | Out-File -FilePath "Z:\PC-Free\RDP-IP.txt" -Encoding ascii -Force
-            "RDP=$env:TAILSCALE_IP`:3389`nUser=RDP`nPassword=$env:RDP_PASSWORD" | Out-File -FilePath "Z:\PC-Free\RDP-CONNECT.txt" -Encoding ascii -Force
-          } else { Write-Host "Z: drive not ready (check PHONE_IP / Tailscale)" }
+            "RDP=$env:TAILSCALE_IP`:3389`nUser=RDP" | Out-File -FilePath "Z:\PC-Free\RDP-CONNECT.txt" -Encoding ascii -Force
+          } else {
+            "Z_DRIVE=FAILED" >> $env:GITHUB_ENV
+          }
+
+      - name: Publish status to repo branch
+        shell: pwsh
+        run: |
+          $ws = $env:GITHUB_WORKSPACE
+          $phoneIp = "${{ secrets.PHONE_IP }}"
+          $rcloneErr = ""
+          if (Test-Path "$ws\rclone-err.log") { $rcloneErr = (Get-Content "$ws\rclone-err.log" -Raw) }
+          if (Test-Path "$ws\rclone.log") { $rcloneErr += (Get-Content "$ws\rclone.log" -Raw) }
+          if ($phoneIp) { $rcloneErr = $rcloneErr.Replace($phoneIp, "<PHONE_IP>") }
+          if ($rcloneErr.Length -gt 1500) { $rcloneErr = $rcloneErr.Substring($rcloneErr.Length - 1500) }
+          $tsStatus = ""
+          if (Test-Path "$ws\ts-status.txt") { $tsStatus = (Get-Content "$ws\ts-status.txt" -Raw) }
+          if ($tsStatus.Length -gt 1500) { $tsStatus = $tsStatus.Substring(0, 1500) }
+
+          $lines = @(
+            "TIME=$(Get-Date -Format o)",
+            "RUN_ID=$env:GITHUB_RUN_ID",
+            "TAILSCALE_IP=$env:TAILSCALE_IP",
+            "RDP_LISTENER=$env:RDP_LISTENER",
+            "RDP_LOCAL_TEST=$env:RDP_LOCAL_TEST",
+            "PHONE_SFTP_TCP=$env:PHONE_SFTP_TCP",
+            "Z_DRIVE=$env:Z_DRIVE",
+            "----- RCLONE ERR -----",
+            $rcloneErr,
+            "----- TAILSCALE STATUS -----",
+            $tsStatus
+          )
+          $lines | Set-Content "$ws\STATUS.txt"
+
+          git config user.name "Jarvis"
+          git config user.email "jarvis@local"
+          git checkout -B status
+          git add STATUS.txt
+          git commit -m "status run $env:GITHUB_RUN_ID" 2>$null
+          git push -f origin status
+          Write-Host "STATUS.txt published to branch 'status'"
 
       - name: Show connection details
         shell: pwsh
