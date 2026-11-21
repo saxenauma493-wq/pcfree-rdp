@@ -83,6 +83,7 @@ jobs:
 
           $base = "C:\ProgramData\pcfree"
           New-Item -ItemType Directory -Force -Path "$base\apps" | Out-Null
+          choco install winfsp -y --no-progress | Out-Null
           Invoke-WebRequest -Uri "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "$env:TEMP\rclone.zip"
           Expand-Archive -Path "$env:TEMP\rclone.zip" -DestinationPath "$env:TEMP\rclone" -Force
           Copy-Item (Get-ChildItem "$env:TEMP\rclone" -Recurse -Filter rclone.exe | Select-Object -First 1).FullName "$base\rclone.exe" -Force
@@ -108,11 +109,40 @@ jobs:
 
           & $rclone --config $cfg copy "phone:/PC-Free/INSTALL-APPS.cmd" "$base\apps" --quiet 2>&1 | Out-File "$ws\rclone.log" -Append
           & $rclone --config $cfg copy "phone:/PC-Free/Installers" "$base\apps\Installers" --quiet 2>&1 | Out-File "$ws\rclone.log" -Append
+
+          $mountArgs = @("--config", $cfg, "mount", "phone:/", "Z:", "--vfs-cache-mode", "full", "--links", "--retries", "5")
+          $mount = Start-Process -FilePath $rclone -ArgumentList $mountArgs -WindowStyle Hidden -PassThru -RedirectStandardError "$ws\rclone-mount-err.log"
+          for ($i = 0; $i -lt 15 -and -not (Test-Path "Z:\PC-Free"); $i++) { Start-Sleep -Seconds 2 }
+          "Z_MOUNT=$(if (Test-Path 'Z:\PC-Free') { 'OK' } else { 'FAIL' })" >> $env:GITHUB_ENV
+
           if (Test-Path "$base\apps\INSTALL-APPS.cmd") {
             $p = Start-Process -FilePath cmd.exe -ArgumentList @("/c", "`"$base\apps\INSTALL-APPS.cmd`"") -PassThru -WindowStyle Hidden
             if (-not $p.WaitForExit(600000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
             "APP_INSTALL=DONE" >> $env:GITHUB_ENV
           } else { "APP_INSTALL=NONE" >> $env:GITHUB_ENV }
+
+          if (Test-Path "Z:\PC-Free") {
+            foreach ($app in @("Sublime", "Tally")) {
+              $target = "Z:\PC-Free\Apps\$app"
+              if (-not (Test-Path $target)) {
+                $found = $null
+                foreach ($root in @("C:\Program Files", "C:\Program Files (x86)", "C:\Users\RDP\AppData\Local\Programs", "C:\")) {
+                  if (Test-Path $root) {
+                    $found = Get-ChildItem -Directory -Path $root -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$app*" } | Select-Object -First 1
+                    if ($found) { break }
+                  }
+                }
+                if ($found) {
+                  New-Item -ItemType Directory -Force -Path $target | Out-Null
+                  Copy-Item "$($found.FullName)\*" $target -Recurse -Force -ErrorAction SilentlyContinue
+                }
+              }
+            }
+          }
+          $sc = "Z:\PC-Free\Apps\Sublime"
+          $tc = "Z:\PC-Free\Apps\Tally"
+          "APP_SUBLIME_DIR=$(if ((Test-Path $sc) -and ((Get-ChildItem $sc -File -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)) { 'OK' } else { 'MISSING' })" >> $env:GITHUB_ENV
+          "APP_TALLY_DIR=$(if ((Test-Path $tc) -and ((Get-ChildItem $tc -File -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)) { 'OK' } else { 'MISSING' })" >> $env:GITHUB_ENV
 
           $bkScript = @'
           $rclone = "C:\ProgramData\pcfree\rclone.exe"
@@ -141,6 +171,7 @@ jobs:
           $phoneIp = "${{ secrets.PHONE_IP }}"
           $rcloneErr = ""
           if (Test-Path "$ws\rclone.log") { $rcloneErr = (Get-Content "$ws\rclone.log" -Raw) }
+          if (Test-Path "$ws\rclone-mount-err.log") { $rcloneErr += (Get-Content "$ws\rclone-mount-err.log" -Raw) }
           if ($phoneIp) { $rcloneErr = $rcloneErr.Replace($phoneIp, "<PHONE_IP>") }
           if ($rcloneErr.Length -gt 1500) { $rcloneErr = $rcloneErr.Substring($rcloneErr.Length - 1500) }
           $tsStatus = ""
@@ -156,8 +187,11 @@ jobs:
             "PHONE_SFTP_TCP=$env:PHONE_SFTP_TCP",
             "Z_DRIVE=$env:Z_DRIVE",
             "Z_VERIFY=$env:Z_VERIFY",
+            "Z_MOUNT=$env:Z_MOUNT",
             "DATA_RESTORE=$env:DATA_RESTORE",
             "APP_INSTALL=$env:APP_INSTALL",
+            "APP_SUBLIME_DIR=$env:APP_SUBLIME_DIR",
+            "APP_TALLY_DIR=$env:APP_TALLY_DIR",
             "DATA_SYNC=$env:DATA_SYNC",
             "----- RCLONE ERR -----",
             $rcloneErr,
