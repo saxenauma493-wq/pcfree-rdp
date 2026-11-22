@@ -116,47 +116,40 @@ jobs:
           for ($i = 0; $i -lt 15 -and -not (Test-Path "Z:\PC-Free"); $i++) { Start-Sleep -Seconds 2 }
           "Z_MOUNT=$(if (Test-Path 'Z:\PC-Free') { 'OK' } else { 'FAIL' })" >> $env:GITHUB_ENV
 
-          $apps = @(
-            @{ Name = "SUBLIME"; Exe = "$base\apps\Installers\sublime_text_build_4215_x64_setup.exe"; Args = @("/VERYSILENT", "/NORESTART", "/DIR=Z:\PC-Free\Apps\Sublime") },
-            @{ Name = "DIRECTX"; Exe = "$base\apps\Installers\dxwebsetup.exe"; Args = @("/q", "/a") },
-            @{ Name = "TALLY"; Exe = "$base\apps\Installers\setup (1).exe"; Args = @("/VERYSILENT", "/NORESTART", "/DIR=Z:\PC-Free\Apps\Tally") }
+          $localApps = "$userDir\Apps"
+          New-Item -ItemType Directory -Force -Path $localApps | Out-Null
+          $appDefs = @(
+            @{ Name = "Sublime"; Local = "$localApps\Sublime"; Remote = "Z:\PC-Free\Apps\Sublime"; Installer = "$base\apps\Installers\sublime_text_build_4215_x64_setup.exe"; Args = @("/VERYSILENT", "/NORESTART", "/DIR=$localApps\Sublime"); ExeName = "sublime_text.exe" },
+            @{ Name = "Tally"; Local = "$localApps\Tally"; Remote = "Z:\PC-Free\Apps\Tally"; Installer = ""; Args = @(); ExeName = "tally.exe" }
           )
-          foreach ($a in $apps) {
-            if (-not (Test-Path $a.Exe)) { "$($a.Name)_EXIT=NO_EXE" >> $env:GITHUB_ENV; continue }
-            $p = Start-Process -FilePath $a.Exe -ArgumentList $a.Args -PassThru -WindowStyle Hidden -RedirectStandardOutput "$base\apps\$($a.Name).out.log" -RedirectStandardError "$base\apps\$($a.Name).err.log"
-            if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; $code = "TIMEOUT" } else { $code = $p.ExitCode }
-            "$($a.Name)_EXIT=$code" >> $env:GITHUB_ENV
-          }
-          if (-not (Test-Path "Z:\PC-Free\Apps\Tally\*")) {
-            $t = "$base\apps\Installers\setup (1).exe"
-            if (Test-Path $t) {
-              $p = Start-Process -FilePath $t -ArgumentList @("/S", "/D=Z:\PC-Free\Apps\Tally") -PassThru -WindowStyle Hidden -RedirectStandardOutput "$base\apps\TALLY_NSIS.out.log" -RedirectStandardError "$base\apps\TALLY_NSIS.err.log"
-              if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; $code = "TIMEOUT" } else { $code = $p.ExitCode }
-              "TALLY_NSIS_EXIT=$code" >> $env:GITHUB_ENV
+          foreach ($app in $appDefs) {
+            $hasRemote = (Test-Path $app.Remote) -and ((Get-ChildItem $app.Remote -File -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)
+            if ($hasRemote) {
+              & $rclone --config $cfg copy "phone:/PC-Free/Apps/$($app.Name)" $app.Local --quiet 2>&1 | Out-File "$ws\rclone.log" -Append
+              "RESTORE_$($app.Name.ToUpper())=OK" >> $env:GITHUB_ENV
+            } elseif ($app.Installer -and (Test-Path $app.Installer)) {
+              $p = Start-Process -FilePath $app.Installer -ArgumentList $app.Args -PassThru -WindowStyle Hidden -RedirectStandardOutput "$base\apps\$($app.Name).out.log" -RedirectStandardError "$base\apps\$($app.Name).err.log"
+              if (-not $p.WaitForExit(120000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; $code = "TIMEOUT" } else { $code = $p.ExitCode }
+              "$($app.Name.ToUpper())_EXIT=$code" >> $env:GITHUB_ENV
             }
           }
           "APP_INSTALL=DONE" >> $env:GITHUB_ENV
 
-          if (Test-Path "Z:\PC-Free") {
-            foreach ($app in @("Sublime", "Tally")) {
-              $target = "Z:\PC-Free\Apps\$app"
-              if (-not (Test-Path $target)) {
-                $found = $null
-                foreach ($root in @("C:\Program Files", "C:\Program Files (x86)", "C:\Users\RDP\AppData\Local\Programs", "C:\")) {
-                  if (Test-Path $root) {
-                    $found = Get-ChildItem -Directory -Path $root -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$app*" } | Select-Object -First 1
-                    if ($found) { break }
-                  }
-                }
-                if ($found) {
-                  New-Item -ItemType Directory -Force -Path $target | Out-Null
-                  Copy-Item "$($found.FullName)\*" $target -Recurse -Force -ErrorAction SilentlyContinue
-                }
-              }
+          $shell = New-Object -ComObject WScript.Shell
+          foreach ($app in $appDefs) {
+            $exe = Get-ChildItem $app.Local -Filter $app.ExeName -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($exe) {
+              $lnk = $shell.CreateShortcut("$userDir\Desktop\$($app.Name).lnk")
+              $lnk.TargetPath = $exe.FullName
+              $lnk.WorkingDirectory = $exe.DirectoryName
+              $lnk.Save()
+              "SHORTCUT_$($app.Name.ToUpper())=OK" >> $env:GITHUB_ENV
+            } else {
+              "SHORTCUT_$($app.Name.ToUpper())=NO_EXE" >> $env:GITHUB_ENV
             }
           }
-          $sc = "Z:\PC-Free\Apps\Sublime"
-          $tc = "Z:\PC-Free\Apps\Tally"
+          $sc = "$localApps\Sublime"
+          $tc = "$localApps\Tally"
           "APP_SUBLIME_DIR=$(if ((Test-Path $sc) -and ((Get-ChildItem $sc -File -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)) { 'OK' } else { 'MISSING' })" >> $env:GITHUB_ENV
           "APP_TALLY_DIR=$(if ((Test-Path $tc) -and ((Get-ChildItem $tc -File -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)) { 'OK' } else { 'MISSING' })" >> $env:GITHUB_ENV
 
@@ -225,6 +218,10 @@ jobs:
             "APP_INSTALL=$env:APP_INSTALL",
             "APP_SUBLIME_DIR=$env:APP_SUBLIME_DIR",
             "APP_TALLY_DIR=$env:APP_TALLY_DIR",
+            "RESTORE_SUBLIME=$env:RESTORE_SUBLIME",
+            "RESTORE_TALLY=$env:RESTORE_TALLY",
+            "SHORTCUT_SUBLIME=$env:SHORTCUT_SUBLIME",
+            "SHORTCUT_TALLY=$env:SHORTCUT_TALLY",
             "SUBLIME_EXIT=$env:SUBLIME_EXIT",
             "DIRECTX_EXIT=$env:DIRECTX_EXIT",
             "TALLY_EXIT=$env:TALLY_EXIT",
@@ -268,6 +265,13 @@ jobs:
           if (Test-Path "C:\ProgramData\pcfree\backup.ps1") {
             & pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\ProgramData\pcfree\backup.ps1"
           }
+          $rclone = "C:\ProgramData\pcfree\rclone.exe"
+          $cfg = "C:\ProgramData\pcfree\rclone.conf"
+          foreach ($app in @("Sublime", "Tally")) {
+            $src = "C:\Users\RDP\Apps\$app"
+            if (Test-Path $src) { & $rclone --config $cfg copy $src "phone:/PC-Free/Apps/$app" --quiet }
+          }
+          Write-Host "Final app backup done"
           Write-Host "Triggering next session..."
           $uri = "https://api.github.com/repos/saxenauma493-wq/pcfree-rdp/actions/workflows/rdp.yml/dispatches"
           $hdr = @{
