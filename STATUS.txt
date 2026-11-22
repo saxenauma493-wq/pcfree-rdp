@@ -1,0 +1,44 @@
+TIME=2026-11-22T09:07:28.7627220+00:00
+RUN_ID=45000961375
+TAILSCALE_IP=100.87.58.22
+RDP_LISTENER=LISTEN
+RDP_LOCAL_TEST=True
+PHONE_SFTP_TCP=True
+Z_DRIVE=READY
+Z_VERIFY=OK
+Z_MOUNT=OK
+DATA_RESTORE=DONE
+APP_INSTALL=DONE
+APP_SUBLIME_DIR=MISSING
+APP_TALLY_DIR=MISSING
+SUBLIME_EXIT=TIMEOUT
+DIRECTX_EXIT=TIMEOUT
+TALLY_EXIT=TIMEOUT
+TALLY_NSIS_EXIT=TIMEOUT
+MATCHED_DIRS=
+INSTALL_LOG=--- DIRECTX.err.log ---  --- DIRECTX.out.log ---  --- SUBLIME.err.log ---  --- SUBLIME.out.log ---  --- TALLY_NSIS.err.log ---  --- TALLY_NSIS.out.log ---  --- TALLY.err.log ---  --- TALLY.out.log ---  
+DATA_SYNC=TASK
+----- RCLONE ERR -----
+nnected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.
+2026/11/22 08:49:45 ERROR : PC-Free/Apps/Sublime/plugin_host-3.3.exe: vfs cache: failed to upload try #1, will retry in 10s: vfs cache: failed to transfer file from cache to remote: Put mkParentDir failed: mkdir dirExists failed: dirExists: couldn't connect SSH: dial tcp <PHONE_IP>:2222: connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.
+2026/11/22 09:00:13 ERROR : PC-Free/Apps/Sublime/update_installer.exe: Failed to copy: Put mkParentDir failed: mkdir dirExists failed: dirExists: couldn't connect SSH: dial tcp <PHONE_IP>:2222: connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.
+2026/11/22 09:03:46 ERROR : PC-Free/Apps/Sublime/update_installer.exe: vfs cache: failed to upload try #1, will retry in 10s: vfs cache: failed to transfer file from cache to remote: Put mkParentDir failed: mkdir dirExists failed: dirExists: couldn't connect SSH: dial tcp <PHONE_IP>:2222: connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.
+
+----- TAILSCALE STATUS -----
+100.87.58.22    pcfree-45000961375  saxenauma493-wq@  windows  -                           
+100.126.13.111  acer-one-8-t4-82l   saxenauma493-wq@  android  offline, last seen 16h ago  
+100.113.235.10  pcfree-44895031531  saxenauma493-wq@  windows  offline, last seen 21h ago  
+100.75.131.31   pcfree-44895546943  saxenauma493-wq@  windows  offline, last seen 21h ago  
+100.67.15.26    pcfree-44896195464  saxenauma493-wq@  windows  offline, last seen 21h ago  
+100.66.29.13    pcfree-44896645481  saxenauma493-wq@  windows  offline, last seen 21h ago  
+100.67.174.68   pcfree-44896808288  saxenauma493-wq@  windows  offline, last seen 21h ago  
+100.76.242.112  pcfree-44897022257  saxenauma493-wq@  windows  offline, last seen 18h ago  
+100.102.24.18   pcfree-44907126751  saxenauma493-wq@  windows  offline, last seen 18h ago  
+100.82.245.33   pcfree-44907506050  saxenauma493-wq@  windows  offline, last seen 15h ago  
+100.72.194.48   pcfree-44924342364  saxenauma493-wq@  windows  offline, last seen 15h ago  
+100.83.14.87    pcfree-44927241322  saxenauma493-wq@  windows  offline, last seen 14h ago  
+100.112.165.74  pcfree-44929808954  saxenauma493-wq@  windows  offline, last seen 14h ago  
+100.99.32.115   pcfree-44931281737  saxenauma493-wq@  windows  offline, last seen 14h ago  
+100.108.79.105  pcfree-44932901578  saxenauma493-wq@  windows  offline, last seen 13h ago  
+100.124.12.122  pcfree-44936553218  saxenauma493-wq@  windows  offline, last seen 7h ago   
+100.77.57.52
